@@ -15,6 +15,8 @@ lint_on_build = false
 
 [rpc_endpoints]
 base_sepolia = "https://sepolia.base.org"
+sepolia = "https://rpc.sepolia.org" # ETH Sepolia
 
 [etherscan]
 base_sepolia = { key = "EM9UGAE2GGXC9UDWTC8PI19IAM6SFH42E6" }
+sepolia = { key = "${ETHERSCAN_API_KEY}" }

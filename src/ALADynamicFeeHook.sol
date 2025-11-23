@@ -11,7 +11,9 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 
 // Interface minima necesaria para interactuar con el Vault
 interface IERC4626 is IERC20 {
@@ -21,28 +23,45 @@ interface IERC4626 is IERC20 {
     function totalAssets() external view returns (uint256);
 }
 
+import {console} from "forge-std/console.sol"; // Importar console
+
 contract ALADynamicFeeHook is BaseHook {
     using LPFeeLibrary for uint24;
     using ECDSA for bytes32;
     using CurrencyLibrary for Currency;
+    using SafeCast for int128;
+    using SafeCast for uint256;
+    using BalanceDeltaLibrary for BalanceDelta;
 
     // La dirección pública de tu Backend (ALA Router)
     address public immutable TRUSTED_SIGNER;
+    address public immutable DATA_SCIENTIST;
+    address public immutable PLATFORM;
+    IERC20 public immutable GOVERNANCE_TOKEN; // Token $ALA
 
     // --- VARIABLES DE REHYPOTHECATION ---
     mapping(Currency => IERC4626) public vaults;
+    mapping(address => mapping(Currency => uint256)) public accumulatedFees;
 
-    // Configuraciones de Estrategia (15% Buffer, rebalancear si <5% o >25%)
-    uint256 public constant TARGET_BUFFER_PERCENT = 15; 
-    uint256 public constant LOWER_BOUND_PERCENT = 5;
-    uint256 public constant UPPER_BOUND_PERCENT = 25;
-    uint256 public constant MIN_SWAP_THRESHOLD = 1 ether; 
+    // Configuraciones DEFAULT (si no se proveen o para addLiquidity)
+    uint256 public constant DEFAULT_BUFFER = 15;
+    uint256 public constant DEFAULT_LOWER = 5;
+    uint256 public constant DEFAULT_UPPER = 25;
+    uint256 public constant MIN_SWAP_THRESHOLD = 1 ether;
+    
+    uint256 public constant FIXED_HOOK_FEE_BPS = 6; // 0.06% Total (Standard)
+    uint256 public constant DISCOUNTED_HOOK_FEE_BPS = 3; // 0.03% Total (VIP)
+    uint256 public constant VIP_THRESHOLD = 100 ether; // 100 ALA tokens para ser VIP
 
     error InvalidSignature();
     error ExpiredSignature();
+    error HookFeeTooLarge();
 
-    constructor(IPoolManager _poolManager, address _signer) BaseHook(_poolManager) {
+    constructor(IPoolManager _poolManager, address _signer, address _ds, address _platform, address _govToken) BaseHook(_poolManager) {
         TRUSTED_SIGNER = _signer;
+        DATA_SCIENTIST = _ds;
+        PLATFORM = _platform;
+        GOVERNANCE_TOKEN = IERC20(_govToken);
     }
 
     function setVault(Currency currency, address _vault) external {
@@ -63,7 +82,7 @@ contract ALADynamicFeeHook is BaseHook {
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
-            afterSwapReturnDelta: false,
+            afterSwapReturnDelta: true,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
@@ -71,6 +90,9 @@ contract ALADynamicFeeHook is BaseHook {
 
     struct FeeData {
         uint24 newFee;
+        uint8 targetBuffer;
+        uint8 lowerBound;
+        uint8 upperBound;
         uint256 deadline;
         bytes signature;
     }
@@ -88,15 +110,18 @@ contract ALADynamicFeeHook is BaseHook {
         bytes32 messageHash = keccak256(abi.encodePacked(
             key.toId(),
             data.newFee,
+            data.targetBuffer,
+            data.lowerBound,
+            data.upperBound,
             data.deadline,
             block.chainid
         ));
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
         if (ethSignedMessageHash.recover(data.signature) != TRUSTED_SIGNER) revert InvalidSignature();
 
-        // Rebalance check using only currency (safe)
-        _checkRebalance(key.currency0);
-        _checkRebalance(key.currency1);
+        // Rebalance check using DYNAMIC params
+        _checkRebalance(key.currency0, data.targetBuffer, data.lowerBound, data.upperBound);
+        _checkRebalance(key.currency1, data.targetBuffer, data.lowerBound, data.upperBound);
 
         uint24 feeWithFlag = data.newFee | LPFeeLibrary.OVERRIDE_FEE_FLAG;
         return (ALADynamicFeeHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, feeWithFlag);
@@ -105,13 +130,65 @@ contract ALADynamicFeeHook is BaseHook {
     function afterSwap(
         address,
         PoolKey calldata key,
-        SwapParams calldata,
-        BalanceDelta,
-        bytes calldata
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
     ) external override returns (bytes4, int128) {
-        _checkRebalance(key.currency0);
-        _checkRebalance(key.currency1);
-        return (ALADynamicFeeHook.afterSwap.selector, 0);
+        // En afterSwap volvemos a chequear, pero necesitamos los params.
+        // Decodificamos hookData de nuevo para mantener consistencia
+        FeeData memory data = abi.decode(hookData, (FeeData));
+        _checkRebalance(key.currency0, data.targetBuffer, data.lowerBound, data.upperBound);
+        _checkRebalance(key.currency1, data.targetBuffer, data.lowerBound, data.upperBound);
+
+        (Currency unspecified, int128 unspecifiedAmount) = (params.amountSpecified < 0 == params.zeroForOne)
+            ? (key.currency1, delta.amount1())
+            : (key.currency0, delta.amount0());
+
+        if (unspecifiedAmount > 0) {
+             // Verificar si es VIP ($ALA Holder)
+             uint256 feeBps = FIXED_HOOK_FEE_BPS;
+             
+             if (address(GOVERNANCE_TOKEN) != address(0)) {
+                 // Usamos tx.origin para simplificar la demo
+                 if (GOVERNANCE_TOKEN.balanceOf(tx.origin) >= VIP_THRESHOLD) {
+                     feeBps = DISCOUNTED_HOOK_FEE_BPS;
+                     console.log("DEBUG Hook: VIP Detectado! Fee reducido a 0.03%");
+                 }
+             }
+
+             uint256 feeAmount = FullMath.mulDiv(uint256(int256(unspecifiedAmount)), feeBps, 10000);
+             console.log("DEBUG Hook: Fee calculado:", feeAmount);
+             
+             if (feeAmount > 0) {
+                 poolManager.take(unspecified, address(this), feeAmount);
+                 // El Hook DEBE hacer take() porque al retornar feeAmount, el PoolManager le asigna ese saldo a favor al Hook.
+                 // Si no lo sacamos, queda un delta positivo sin reclamar -> CurrencyNotSettled.
+                 
+                 _settleFee(unspecified, feeAmount);
+                 return (this.afterSwap.selector, feeAmount.toInt128());
+             }
+        }
+        return (this.afterSwap.selector, 0);
+    }
+
+    function _settleFee(Currency currency, uint256 amount) internal {
+        // Total Fee es 0.06% (6 BPS)
+        // Plataforma lleva 0.01% (1 BPS) -> 1/6 del total
+        // Data Scientist lleva 0.05% (5 BPS) -> 5/6 del total
+        
+        uint256 platformAmount = amount / 6; 
+        uint256 dsAmount = amount - platformAmount; // El resto para DS para evitar residuos
+        
+        accumulatedFees[PLATFORM][currency] += platformAmount;
+        accumulatedFees[DATA_SCIENTIST][currency] += dsAmount;
+    }
+
+    function claimFees(Currency currency) external {
+        uint256 amount = accumulatedFees[msg.sender][currency];
+        if (amount > 0) {
+            accumulatedFees[msg.sender][currency] = 0;
+            IERC20(Currency.unwrap(currency)).transfer(msg.sender, amount);
+        }
     }
 
     function beforeAddLiquidity(
@@ -120,19 +197,20 @@ contract ALADynamicFeeHook is BaseHook {
         ModifyLiquidityParams calldata,
         bytes calldata
     ) external override returns (bytes4) {
-        _checkRebalance(key.currency0);
-        _checkRebalance(key.currency1);
+        // En addLiquidity no solemos tener hookData con firma dinamica fresca.
+        // Usamos defaults.
+        _checkRebalance(key.currency0, DEFAULT_BUFFER, DEFAULT_LOWER, DEFAULT_UPPER);
+        _checkRebalance(key.currency1, DEFAULT_BUFFER, DEFAULT_LOWER, DEFAULT_UPPER);
         return ALADynamicFeeHook.beforeAddLiquidity.selector;
     }
 
-    function _checkRebalance(Currency currency) internal {
+    function _checkRebalance(Currency currency, uint256 targetBuffer, uint256 lowerBound, uint256 upperBound) internal {
         IERC4626 vault = vaults[currency];
         if (address(vault) == address(0)) return;
 
         IERC20 token = IERC20(Currency.unwrap(currency));
         
         uint256 balanceInHook = token.balanceOf(address(this));
-        // Use staticcall to be safe or just call view function
         uint256 balanceInVault = vault.convertToAssets(vault.balanceOf(address(this)));
         uint256 totalLiquidity = balanceInHook + balanceInVault;
 
@@ -140,8 +218,8 @@ contract ALADynamicFeeHook is BaseHook {
 
         uint256 currentBufferPercent = (balanceInHook * 100) / totalLiquidity;
 
-        if (currentBufferPercent < LOWER_BOUND_PERCENT) {
-            uint256 targetHookBalance = (totalLiquidity * TARGET_BUFFER_PERCENT) / 100;
+        if (currentBufferPercent < lowerBound) {
+            uint256 targetHookBalance = (totalLiquidity * targetBuffer) / 100;
             if (targetHookBalance > balanceInHook) {
                 uint256 amountToWithdraw = targetHookBalance - balanceInHook;
                 if (balanceInVault >= amountToWithdraw) {
@@ -149,8 +227,8 @@ contract ALADynamicFeeHook is BaseHook {
                 }
             }
 
-        } else if (currentBufferPercent > UPPER_BOUND_PERCENT) {
-            uint256 targetHookBalance = (totalLiquidity * TARGET_BUFFER_PERCENT) / 100;
+        } else if (currentBufferPercent > upperBound) {
+            uint256 targetHookBalance = (totalLiquidity * targetBuffer) / 100;
             if (balanceInHook > targetHookBalance) {
                 uint256 amountToDeposit = balanceInHook - targetHookBalance;
                 vault.deposit(amountToDeposit, address(this));

@@ -193,21 +193,42 @@ contract TestHook is Script, StdCheats {
     function _buildHookData(bytes32 poolIdBytes) internal returns (bytes memory hookData) {
         // --- 3. SIMULAR EL BACKEND Y FIRMAR EL FEE ---
         uint24 dynamicFee = 10000; // 1%
+        uint8 targetBuffer = 15; // 15% buffer por defecto
+        uint8 lowerBound = 5; // 5% lower bound
+        uint8 upperBound = 25; // 25% upper bound
         uint256 deadline = block.timestamp + 60;
         uint256 trustedSignerPrivateKey = vm.envUint("TRUSTED_SIGNER_PRIVATE_KEY");
 
         // Construir el hash del mensaje (debe ser identico al del hook!)
-        bytes32 messageHash = keccak256(abi.encodePacked(poolIdBytes, dynamicFee, deadline, block.chainid));
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            poolIdBytes, 
+            dynamicFee, 
+            targetBuffer,
+            lowerBound,
+            upperBound,
+            deadline, 
+            block.chainid
+        ));
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
 
         // Firmar el hash con la clave privada del signer
         bytes memory signature = _signDigest(ethSignedMessageHash, trustedSignerPrivateKey);
 
-        // Formatear el hookData
-        ALADynamicFeeHook.FeeData memory feeData = ALADynamicFeeHook.FeeData(dynamicFee, deadline, signature);
+        // Formatear el hookData con los nuevos parámetros dinámicos
+        ALADynamicFeeHook.FeeData memory feeData = ALADynamicFeeHook.FeeData({
+            newFee: dynamicFee,
+            targetBuffer: targetBuffer,
+            lowerBound: lowerBound,
+            upperBound: upperBound,
+            deadline: deadline,
+            signature: signature
+        });
         hookData = abi.encode(feeData);
 
         console.log("Fee Dinamico Firmado:", dynamicFee);
+        console.log("Target Buffer:", targetBuffer);
+        console.log("Lower Bound:", lowerBound);
+        console.log("Upper Bound:", upperBound);
         console.log("hookData generado:", vm.toString(hookData));
     }
 
