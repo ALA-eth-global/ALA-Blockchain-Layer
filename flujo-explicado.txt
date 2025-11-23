@@ -1,0 +1,65 @@
+1. Flujo de Despliegue (Lo que ocurrió en los logs)
+
+Este proceso describe cómo se instanciaron los componentes en la red de prueba:
+Infraestructura Base: Se desplegaron los contratos de activos (MockERC20 para WETH y USDC) y sus respectivas bóvedas de rendimiento (MockERC4626), estableciendo los cimientos financieros del sistema.
+Despliegue de la Lógica (Hook): Se publicó en la blockchain el contrato ALADynamicFeeHook. Este contrato contiene la lógica programable para ajustar las comisiones y el spread.
+Vinculación y Registro: Se ejecutó la inicialización en el PoolManager de Uniswap V4. En este paso, se creó el mercado para el par de tokens y se vinculó inmutablemente el ALADynamicFeeHook al Pool, otorgándole autoridad sobre la gestión de fees.
+Provisión de Liquidez: El contrato utilitario PoolExecutor inyectó el capital inicial en el Pool, habilitando el mercado para comenzar a procesar operaciones de intercambio.
+
+2. Flujo Operativo (Funcionamiento del sistema en vivo)
+
+Así opera la arquitectura ahora que está activa:
+Sistema Externo (Señal) $\rightarrow$ Contrato Hook $\rightarrow$ Pool Uniswap V4
+Emisión de Señal: Un sistema de monitoreo off-chain (servidor/backend) analiza condiciones de mercado y envía una transacción al contrato ALADynamicFeeHook para actualizar los parámetros de fee o spread.
+Solicitud de Swap: Un usuario o bot interactúa con Uniswap V4 intentando intercambiar un token por otro en este Pool específico.
+Consulta de Lógica (Callback): Antes (o durante) la ejecución del intercambio, el PoolManager detiene el proceso momentáneamente y consulta al ALADynamicFeeHook para determinar las condiciones actuales.
+Aplicación Dinámica: El contrato Hook informa al Pool la tasa de comisión exacta vigente en ese bloque (basada en la señal recibida en el paso 1).
+Ejecución: El intercambio se finaliza aplicando el costo dinámico dictado por el Hook.
+
+Rehypothecation
+
+1. Las Bóvedas ERC4626
+
+En el reporte, se pueden observar dos transacciones de tipo CREATE con el nombre MockERC4626.
+Estos contratos representan el lugar externo (como Aave, Compound o Yearn) hacia donde se enviarán los fondos inactivos del Pool para generar interés.
+En el log son las transacciones 0xdf72... (Vault WETH) y 0xc2cd... (Vault USDC).
+
+2. La función setVault
+
+Una vez que el Hook (ALADynamicFeeHook) y las Bóvedas existían las conectamos.
+Se llamó a la función setVault(address, address) dos veces.
+Lo que hace es que le dice al contrato Hook que cuando se reciba WETH se deposite automáticamente en la Bóveda X. Cuando se reciba USDC depositalo en la Bóveda Y.
+En el log son las transacciones 0x8153... y 0x8da0....
+
+Funcionamiento
+
+El flujo de rehypothecation ocurre automáticamente dentro del hook.
+
+1. Ingreso de Liquidez: Sucede cuando se agrega liquidez al Pool, el dinero llega al PoolManager.
+2. Intervención del Hook: El Hook intercepta esos fondos (porque es un Hook personalizado).
+3. Rehypothecation: El Hook ejecuta una instrucción para enviar esos fondos a los contratos MockERC4626 que desplegamos.
+
+Resultado: Mientras el Pool de Uniswap hace swaps, los activos subyacentes están en la Bóveda generando interés pasivo. Cuando alguien necesita hacer un swap grande y sacar liquidez, el Hook retira automáticamente lo necesario de la Bóveda.
+
+1. Estructura de Costo Total (Swap Fee)
+
+Para el usuario final (el trader o taker que ejecuta el intercambio), el costo de la operación se compone de la suma de la tarifa estratégica y la tarifa de protocolo.
+Fee Total Aplicado: 0.06% (6 Puntos Básicos).
+Desglose: 0.05% (Componente Dinámico) + 0.01% (Componente Fijo).
+El contrato Hook informa al Pool de Uniswap V4 un Swap Fee único del 0.06% para la ejecución de la transacción.
+
+2. Mecanismo de Distribución (Revenue Split)
+
+Una vez recaudada la comisión total por el contrato, el sistema realiza la división de fondos de la siguiente manera:
+
+A. Componente de Estrategia (Data Scientist): 0.05%
+
+Naturaleza: Variable / Dinámica.
+Función: Remunera la eficiencia del algoritmo de predicción o señal. Este valor es el que se ajustaría dinámicamente según la volatilidad del mercado para optimizar el rendimiento o proteger la liquidez.
+Destino de Fondos: Se asigna al Pool de liquidez (incrementando el valor de las participaciones de los Proveedores de Liquidez) o a la dirección designada del gestor de la estrategia. Representa aproximadamente el 83.3% del ingreso total por comisiones.
+
+B. Componente de Plataforma (Protocol Fee): 0.01%
+
+Naturaleza: Fija.
+Función: Tarifa por uso de infraestructura y despliegue tecnológico. Se cobra independientemente de si la estrategia decide subir o bajar su propio fee (siempre que el total cubra este mínimo).
+Destino de Fondos: Se envía directamente a la tesorería del protocolo o fee collector del contrato ALADynamicFeeHook.
