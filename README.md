@@ -1,5 +1,62 @@
 # ALA Pool - Hook de AMM con Tarifas Dinámicas
 
+## 🚀 Deploy On-Chain: Ethereum Sepolia
+
+### ✅ Despliegue Exitoso
+
+El protocolo ALA ha sido desplegado exitosamente en **Ethereum Sepolia** con todas las funcionalidades implementadas:
+
+- ✅ **Dynamic Fees**: Ajuste dinámico de comisiones basado en condiciones de mercado
+- ✅ **Rehypothecation**: Capitalización automática de fondos inactivos en bóvedas ERC4626
+- ✅ **Umbral**: Sistema de umbrales para optimización de rebalances
+- ✅ **Delta**: Gestión de spread y captura de valor
+- ✅ **Benefits**: Distribución de beneficios entre estrategia y protocolo
+
+### 📋 Transacciones de Deploy
+
+Todas las transacciones del despliegue completo están documentadas en:
+
+- **[transactions-eth-sepolia.txt](./transactions-eth-sepolia.txt)**: Registro completo de todas las transacciones on-chain, incluyendo:
+  - Creación de contratos MockERC20 (WETH, USDC, ALA Governance Token)
+  - Despliegue de bóvedas ERC4626 (Vault WETH, Vault USDC)
+  - Despliegue del ALADynamicFeeHook
+  - Inicialización del Pool en Uniswap V4
+  - Configuración de rehypothecation
+  - Ejecución de swaps con fees dinámicos
+
+### 🔄 Flujo de Trabajo
+
+El flujo completo de despliegue y operación está documentado en:
+
+- **[flujo-explicado.txt](./flujo-explicado.txt)**: Explicación detallada del flujo de trabajo, incluyendo:
+  - **Flujo de Despliegue**: Proceso de instanciación de componentes en la blockchain
+  - **Flujo Operativo**: Funcionamiento del sistema en producción
+  - **Rehypothecation**: Mecanismo de capitalización automática
+  - **Estructura de Costos**: Desglose de fees (0.05% dinámico + 0.01% protocolo)
+  - **Mecanismo de Distribución**: Revenue split entre estrategia y plataforma
+
+### 📊 Simulación y Resultados
+
+Los resultados de las simulaciones y pruebas están disponibles en:
+
+- **[simulacion-eth.txt](./simulacion-eth.txt)**: Resultados de simulaciones ejecutadas en Ethereum Sepolia
+
+### 🔗 Contratos Desplegados
+
+Los contratos principales desplegados en Ethereum Sepolia incluyen:
+
+- **ALADynamicFeeHook**: Hook principal con lógica de fees dinámicos
+- **PoolExecutor**: Contrato utilitario para ejecución de operaciones
+- **MockERC4626 Vaults**: Bóvedas para rehypothecation de WETH y USDC
+
+### 📝 Verificación On-Chain
+
+Todas las transacciones pueden ser verificadas en:
+- **Etherscan Sepolia**: [https://sepolia.etherscan.io](https://sepolia.etherscan.io)
+- **Block Explorer**: Busca los hashes de transacción en el archivo `transactions-eth-sepolia.txt`
+
+---
+
 ## 1. Visión y Problema
 
 Los Automated Market Makers (AMMs) tradicionales usan un modelo de comisiones (fees) estáticas (ej. 0.3%, 0.05%). Este modelo es ineficiente:
@@ -89,65 +146,6 @@ La salida te dará la dirección del hook desplegado.
 ### Backend y Pruebas
 
 Consulta las siguientes secciones para aprender a ejecutar el backend y probar el hook.
-
----
-
-## 🚀 Deploy On-Chain: Ethereum Sepolia
-
-### ✅ Despliegue Exitoso
-
-El protocolo ALA ha sido desplegado exitosamente en **Ethereum Sepolia** con todas las funcionalidades implementadas:
-
-- ✅ **Dynamic Fees**: Ajuste dinámico de comisiones basado en condiciones de mercado
-- ✅ **Rehypothecation**: Capitalización automática de fondos inactivos en bóvedas ERC4626
-- ✅ **Umbral**: Sistema de umbrales para optimización de rebalances
-- ✅ **Delta**: Gestión de spread y captura de valor
-- ✅ **Benefits**: Distribución de beneficios entre estrategia y protocolo
-
-### 📋 Transacciones de Deploy
-
-Todas las transacciones del despliegue completo están documentadas en:
-
-- **[transactions-eth-sepolia.txt](./transactions-eth-sepolia.txt)**: Registro completo de todas las transacciones on-chain, incluyendo:
-  - Creación de contratos MockERC20 (WETH, USDC, ALA Governance Token)
-  - Despliegue de bóvedas ERC4626 (Vault WETH, Vault USDC)
-  - Despliegue del ALADynamicFeeHook
-  - Inicialización del Pool en Uniswap V4
-  - Configuración de rehypothecation
-  - Ejecución de swaps con fees dinámicos
-
-### 🔄 Flujo de Trabajo
-
-El flujo completo de despliegue y operación está documentado en:
-
-- **[flujo-explicado.txt](./flujo-explicado.txt)**: Explicación detallada del flujo de trabajo, incluyendo:
-  - **Flujo de Despliegue**: Proceso de instanciación de componentes en la blockchain
-  - **Flujo Operativo**: Funcionamiento del sistema en producción
-  - **Rehypothecation**: Mecanismo de capitalización automática
-  - **Estructura de Costos**: Desglose de fees (0.05% dinámico + 0.01% protocolo)
-  - **Mecanismo de Distribución**: Revenue split entre estrategia y plataforma
-
-### 📊 Simulación y Resultados
-
-Los resultados de las simulaciones y pruebas están disponibles en:
-
-- **[simulacion-eth.txt](./simulacion-eth.txt)**: Resultados de simulaciones ejecutadas en Ethereum Sepolia
-
-### 🔗 Contratos Desplegados
-
-Los contratos principales desplegados en Ethereum Sepolia incluyen:
-
-- **ALADynamicFeeHook**: Hook principal con lógica de fees dinámicos
-- **PoolExecutor**: Contrato utilitario para ejecución de operaciones
-- **MockERC4626 Vaults**: Bóvedas para rehypothecation de WETH y USDC
-
-### 📝 Verificación On-Chain
-
-Todas las transacciones pueden ser verificadas en:
-- **Etherscan Sepolia**: [https://sepolia.etherscan.io](https://sepolia.etherscan.io)
-- **Block Explorer**: Busca los hashes de transacción en el archivo `transactions-eth-sepolia.txt`
-
-
 
 ---
 
