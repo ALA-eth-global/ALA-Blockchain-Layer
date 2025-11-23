@@ -1,3 +1,5 @@
+# This repo is only for our blockchain layer, https://github.com/ALA-eth-global is our main repo
+
 # ALA Pool - Hook de AMM con Tarifas Dinámicas
 
 ## 🚀 Deploy On-Chain: Ethereum Sepolia
